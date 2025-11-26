@@ -1,4 +1,4 @@
-import { CreditCard, Smartphone, Plus, Check, Receipt, ExternalLink } from 'lucide-react';
+import { CreditCard, Smartphone, Plus, Check, Receipt, ExternalLink, Tag } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { createMercadoPagoPreference } from '../../lib/mercadopago';
@@ -8,8 +8,25 @@ interface RechargePrice {
   period: string;
   period_label: string;
   duration_days: number;
-  duration_months?: number; // Campo real da tabela recharge_options
+  duration_months?: number;
   price: number;
+  original_price?: number;
+  has_promotion?: boolean;
+  promotion_name?: string;
+}
+
+interface Promotion {
+  id: string;
+  name: string;
+  promotion_type: 'percentage' | 'fixed_amount';
+  apply_to: string;
+  apply_to_period: 'all_periods' | 'mensal' | 'trimestral' | 'semestral' | 'anual' | null;
+  discount_percentage: number | null;
+  discount_amount: number | null;
+  start_date: string;
+  end_date: string | null;
+  is_individual: boolean;
+  active: boolean;
 }
 
 interface PaymentCardProps {
@@ -25,10 +42,11 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
   const [loading, setLoading] = useState(false);
   const [loadingPrices, setLoadingPrices] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [activePromotion, setActivePromotion] = useState<Promotion | null>(null);
 
   useEffect(() => {
     loadRechargePrices();
-  }, [planType]);
+  }, [planType, userId]);
 
   const loadRechargePrices = async () => {
     if (!planType) {
@@ -36,26 +54,126 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
       return;
     }
 
-    const { data, error } = await supabase
-      .from('recharge_options')
-      .select('*')
-      .eq('plan_type', planType)
-      .eq('active', true)
-      .order('duration_months', { ascending: true });
+    try {
+      // 1. Buscar opções de recarga
+      const { data, error } = await supabase
+        .from('recharge_options')
+        .select('*')
+        .eq('plan_type', planType)
+        .eq('active', true)
+        .order('duration_months', { ascending: true });
 
-    if (!error && data) {
-      // Adapta dados: duration_months -> duration_days, display_name -> period_label
-      const adaptedData = data.map((item: any) => ({
-        ...item,
-        period_label: item.display_name || item.period_label || item.period,
-        duration_days: item.duration_months ? item.duration_months * 30 : item.duration_days || 30,
-      }));
-      setRechargePrices(adaptedData);
-      if (adaptedData.length > 0) {
-        setSelectedPeriod(adaptedData[0]);
+      if (error) throw error;
+
+      // 2. Buscar promoções ativas
+      const hoje = new Date().toISOString().split('T')[0];
+
+      // Buscar promoções gerais
+      const { data: promotionsData } = await supabase
+        .from('promotions')
+        .select('*')
+        .eq('active', true)
+        .eq('is_individual', false)
+        .or(`apply_to.eq.all_plans,apply_to.eq.${planType}`)
+        .lte('start_date', hoje)
+        .or(`end_date.is.null,end_date.gte.${hoje}`);
+
+      // Buscar promoções individuais do usuário
+      const { data: individualPromotions } = await supabase
+        .from('promotion_users')
+        .select(`
+          promotion:promotions (
+            id,
+            name,
+            promotion_type,
+            apply_to,
+            apply_to_period,
+            discount_percentage,
+            discount_amount,
+            start_date,
+            end_date,
+            is_individual,
+            active
+          )
+        `)
+        .eq('user_id', userId)
+        .eq('active', true);
+
+      // Combinar promoções
+      let bestPromotion: Promotion | null = null;
+
+      // Verificar promoções individuais primeiro (prioridade)
+      if (individualPromotions && individualPromotions.length > 0) {
+        for (const item of individualPromotions) {
+          const promo = item.promotion as unknown as Promotion;
+          if (
+            promo &&
+            promo.active &&
+            (promo.apply_to === 'all_plans' || promo.apply_to === planType) &&
+            (!promo.end_date || promo.end_date >= hoje)
+          ) {
+            bestPromotion = promo;
+            break;
+          }
+        }
       }
+
+      // Se não houver promoção individual, verificar gerais
+      if (!bestPromotion && promotionsData && promotionsData.length > 0) {
+        bestPromotion = promotionsData[0] as Promotion;
+      }
+
+      setActivePromotion(bestPromotion);
+
+      // 3. Aplicar desconto nos preços
+      if (data) {
+        const adaptedData = data.map((item: any) => {
+          const basePrice = item.price;
+          let finalPrice = basePrice;
+          let hasPromotion = false;
+          let promotionName = '';
+
+          if (bestPromotion) {
+            // Verificar se a promoção se aplica a este período específico
+            const periodMatches =
+              !bestPromotion.apply_to_period ||
+              bestPromotion.apply_to_period === 'all_periods' ||
+              bestPromotion.apply_to_period === item.period;
+
+            if (periodMatches) {
+              if (bestPromotion.promotion_type === 'percentage' && bestPromotion.discount_percentage) {
+                finalPrice = basePrice * (1 - bestPromotion.discount_percentage / 100);
+                hasPromotion = true;
+                promotionName = bestPromotion.name;
+              } else if (bestPromotion.promotion_type === 'fixed_amount' && bestPromotion.discount_amount) {
+                finalPrice = Math.max(0, basePrice - bestPromotion.discount_amount);
+                hasPromotion = true;
+                promotionName = bestPromotion.name;
+              }
+            }
+          }
+
+          return {
+            ...item,
+            period_label: item.display_name || item.period_label || item.period,
+            duration_days: item.duration_months ? item.duration_months * 30 : item.duration_days || 30,
+            original_price: hasPromotion ? basePrice : undefined,
+            price: finalPrice,
+            has_promotion: hasPromotion,
+            promotion_name: promotionName,
+          };
+        });
+
+        setRechargePrices(adaptedData);
+        if (adaptedData.length > 0) {
+          setSelectedPeriod(adaptedData[0]);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao carregar preços:', error);
+    } finally {
+      setLoadingPrices(false);
     }
-    setLoadingPrices(false);
   };
 
   const handlePayment = async (e: React.FormEvent) => {
@@ -66,19 +184,23 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
     setMessage(null);
 
     try {
-      // 1. Cria a transação com status 'pending' (não 'completed')
+      // 1. Cria a transação com status 'pending'
       const { data: transaction, error: transactionError } = await supabase
         .from('transactions')
         .insert({
-      user_id: userId,
-      type: 'recharge',
-      amount: selectedPeriod.price,
-      payment_method: paymentMethod,
-          status: 'pending', // IMPORTANTE: Status inicial é 'pending'
-      description: `Recarga ${selectedPeriod.period_label} - ${selectedPeriod.duration_days} dias`,
+          user_id: userId,
+          type: 'recharge',
+          amount: selectedPeriod.price,
+          payment_method: paymentMethod,
+          status: 'pending',
+          description: `Recarga ${selectedPeriod.period_label} - ${selectedPeriod.duration_days} dias`,
           metadata: {
             period: selectedPeriod.period,
             duration_days: selectedPeriod.duration_days,
+            original_price: selectedPeriod.original_price,
+            has_promotion: selectedPeriod.has_promotion,
+            promotion_id: activePromotion?.id,
+            promotion_name: selectedPeriod.promotion_name,
           },
         })
         .select()
@@ -100,9 +222,9 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
           duration_days: selectedPeriod.duration_days,
         },
       };
-      
+
       console.log('📤 Enviando para Edge Function:', JSON.stringify(preferenceParams, null, 2));
-      
+
       const preference = await createMercadoPagoPreference(preferenceParams);
 
       // 3. Atualiza a transação com o ID da preferência do Mercado Pago
@@ -117,21 +239,18 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
         .eq('id', transaction.id);
 
       // 4. Redireciona para a página de pagamento do Mercado Pago
-      // Em PRODUÇÃO: usa init_point
-      // Em DESENVOLVIMENTO: usa sandbox_init_point (se disponível)
-      const paymentUrl = import.meta.env.DEV 
+      const paymentUrl = import.meta.env.DEV
         ? (preference.sandbox_init_point || preference.init_point)
         : preference.init_point;
-      
+
       console.log('🔗 Redirecionando para:', paymentUrl);
       window.location.href = paymentUrl;
     } catch (error: any) {
       console.error('Erro ao processar pagamento:', error);
       console.error('   Detalhes completos:', JSON.stringify(error, null, 2));
-      
-      // Extrai a mensagem de erro mais específica
+
       let errorMessage = 'Erro ao processar pagamento. Tente novamente.';
-      
+
       if (error?.message) {
         errorMessage = error.message;
       } else if (typeof error === 'string') {
@@ -139,7 +258,7 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
       } else if (error?.error) {
         errorMessage = error.error;
       }
-      
+
       setMessage({
         type: 'error',
         text: errorMessage,
@@ -182,6 +301,20 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
           <p className="text-sm text-gray-600">Escolha o período de recarga</p>
         </div>
       </div>
+
+      {activePromotion && (
+        <div className="mb-4 p-4 bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200 rounded-lg">
+          <div className="flex items-center space-x-2">
+            <Tag className="w-5 h-5 text-purple-600" />
+            <p className="font-semibold text-purple-900">{activePromotion.name}</p>
+          </div>
+          <p className="text-sm text-purple-700 mt-1">
+            {activePromotion.promotion_type === 'percentage'
+              ? `${activePromotion.discount_percentage}% de desconto aplicado!`
+              : `R$ ${activePromotion.discount_amount?.toFixed(2)} de desconto aplicado!`}
+          </p>
+        </div>
+      )}
 
       <form onSubmit={handlePayment} className="space-y-4">
         {message && (
@@ -232,13 +365,29 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
                           MELHOR VALOR
                         </span>
                       )}
+                      {price.has_promotion && (
+                        <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-xs font-semibold rounded">
+                          PROMOÇÃO
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm text-gray-600">{price.duration_days} dias de acesso</p>
                   </div>
                   <div className="text-right">
-                    <p className={`text-2xl font-bold ${isSelected ? 'text-green-700' : 'text-gray-900'}`}>
-                      R$ {price.price.toFixed(2)}
-                    </p>
+                    {price.has_promotion && price.original_price ? (
+                      <div>
+                        <p className="text-sm text-gray-500 line-through">
+                          R$ {price.original_price.toFixed(2)}
+                        </p>
+                        <p className={`text-2xl font-bold ${isSelected ? 'text-green-700' : 'text-purple-600'}`}>
+                          R$ {price.price.toFixed(2)}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className={`text-2xl font-bold ${isSelected ? 'text-green-700' : 'text-gray-900'}`}>
+                        R$ {price.price.toFixed(2)}
+                      </p>
+                    )}
                     {price.duration_days > 30 && (
                       <p className="text-xs text-gray-500">
                         R$ {(price.price / (price.duration_days / 30)).toFixed(2)}/mês
@@ -324,6 +473,12 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
               <span>Período: {selectedPeriod.period_label}</span>
               <span className="font-bold">R$ {selectedPeriod.price.toFixed(2)}</span>
             </div>
+            {selectedPeriod.has_promotion && selectedPeriod.original_price && (
+              <div className="flex items-center justify-between text-xs text-blue-600 mt-1">
+                <span>Economia:</span>
+                <span className="font-semibold">R$ {(selectedPeriod.original_price - selectedPeriod.price).toFixed(2)}</span>
+              </div>
+            )}
           </div>
         )}
 

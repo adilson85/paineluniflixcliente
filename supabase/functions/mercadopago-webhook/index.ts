@@ -11,7 +11,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const MERCADOPAGO_ACCESS_TOKEN = Deno.env.get('MERCADOPAGO_ACCESS_TOKEN') || '';
+const MERCADOPAGO_ACCESS_TOKEN = Deno.env.get('MERCADO_PAGO_ACCESS_TOKEN') || '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
@@ -130,7 +130,7 @@ serve(async (req) => {
         // Busca a transação para pegar o user_id e metadata
         const { data: transaction, error: transactionError } = await supabase
           .from('transactions')
-          .select('user_id, metadata')
+          .select('user_id, metadata, amount, description')
           .eq('id', transactionId)
           .single();
 
@@ -141,39 +141,97 @@ serve(async (req) => {
           const metadata = transaction.metadata || {};
           const durationDays = metadata.duration_days || 30;
 
-          // Busca a assinatura ativa do usuário
-          const { data: subscription, error: subscriptionError } = await supabase
+          // Busca dados do usuário
+          const { data: user } = await supabase
+            .from('users')
+            .select('full_name')
+            .eq('id', userId)
+            .single();
+
+          const userName = user?.full_name || 'Cliente';
+
+          // Busca as assinaturas ativas do usuário
+          const { data: subscriptions, error: subscriptionError } = await supabase
             .from('subscriptions')
-            .select('id, expiration_date')
+            .select('id, expiration_date, panel_name')
             .eq('user_id', userId)
             .eq('status', 'active')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+            .order('created_at', { ascending: false });
 
           if (subscriptionError) {
-            console.error('❌ Erro ao buscar assinatura:', subscriptionError);
-          } else if (subscription) {
-            // Calcula nova data de expiração
-            const currentExpiration = subscription.expiration_date
-              ? new Date(subscription.expiration_date)
-              : new Date();
-            const newExpiration = new Date(currentExpiration);
-            newExpiration.setDate(newExpiration.getDate() + durationDays);
+            console.error('❌ Erro ao buscar assinaturas:', subscriptionError);
+          } else if (subscriptions && subscriptions.length > 0) {
+            // Calcula nova data de expiração e atualiza todas as assinaturas
+            const quantidadePontos = subscriptions.length;
 
-            // Atualiza a assinatura
-            const { error: updateSubError } = await supabase
-              .from('subscriptions')
-              .update({
-                expiration_date: newExpiration.toISOString(),
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', subscription.id);
+            for (const subscription of subscriptions) {
+              // Se a assinatura já expirou, soma a partir de hoje
+              // Se ainda está ativa, soma a partir da data de expiração
+              const hoje = new Date();
+              const dataExpiracao = subscription.expiration_date
+                ? new Date(subscription.expiration_date)
+                : hoje;
 
-            if (updateSubError) {
-              console.error('❌ Erro ao atualizar assinatura:', updateSubError);
+              const currentExpiration = dataExpiracao > hoje ? dataExpiracao : hoje;
+              const newExpiration = new Date(currentExpiration);
+              newExpiration.setDate(newExpiration.getDate() + durationDays);
+
+              // Atualiza a assinatura
+              const { error: updateSubError } = await supabase
+                .from('subscriptions')
+                .update({
+                  expiration_date: newExpiration.toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', subscription.id);
+
+              if (updateSubError) {
+                console.error('❌ Erro ao atualizar assinatura:', updateSubError);
+              } else {
+                console.log('✅ Assinatura atualizada:', subscription.id, '->', newExpiration);
+              }
+            }
+
+            // Registrar entrada no caixa
+            const hoje = new Date().toLocaleDateString('pt-BR', {
+              timeZone: 'America/Sao_Paulo',
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit'
+            }).split('/').reverse().join('-');
+
+            const { error: caixaError } = await supabase
+              .from('caixa_movimentacoes')
+              .insert({
+                data: hoje,
+                historico: `Pagamento Online - ${userName} (${transaction.description || 'Recarga'})`,
+                entrada: transaction.amount,
+                saida: 0,
+              });
+
+            if (caixaError) {
+              console.error('❌ Erro ao registrar no caixa:', caixaError);
             } else {
-              console.log('✅ Assinatura atualizada:', subscription.id, '->', newExpiration);
+              console.log('✅ Entrada registrada no caixa:', transaction.amount);
+            }
+
+            // Registrar créditos vendidos
+            const quantidadeCreditos = quantidadePontos * (metadata.duration_months || Math.ceil(durationDays / 30));
+            const painelPrincipal = subscriptions[0]?.panel_name || null;
+
+            const { error: creditosError } = await supabase
+              .from('creditos_vendidos')
+              .insert({
+                data: hoje,
+                historico: `Pagamento Online - ${userName} (${quantidadePontos} ponto${quantidadePontos > 1 ? 's' : ''})`,
+                painel: painelPrincipal,
+                quantidade_creditos: quantidadeCreditos,
+              });
+
+            if (creditosError) {
+              console.error('❌ Erro ao registrar créditos vendidos:', creditosError);
+            } else {
+              console.log('✅ Créditos vendidos registrados:', quantidadeCreditos);
             }
           }
         }
