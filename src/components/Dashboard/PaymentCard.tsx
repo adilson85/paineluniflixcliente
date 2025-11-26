@@ -117,8 +117,13 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
         .eq('id', transaction.id);
 
       // 4. Redireciona para a página de pagamento do Mercado Pago
-      // Usa sandbox_init_point se estiver em modo de teste
-      const paymentUrl = preference.sandbox_init_point || preference.init_point;
+      // Em PRODUÇÃO: usa init_point
+      // Em DESENVOLVIMENTO: usa sandbox_init_point (se disponível)
+      const paymentUrl = import.meta.env.DEV 
+        ? (preference.sandbox_init_point || preference.init_point)
+        : preference.init_point;
+      
+      console.log('🔗 Redirecionando para:', paymentUrl);
       window.location.href = paymentUrl;
     } catch (error: any) {
       console.error('Erro ao processar pagamento:', error);
