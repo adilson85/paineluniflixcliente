@@ -104,6 +104,24 @@ serve(async (req) => {
 
       const newStatus = statusMap[payment.status] || 'pending';
 
+      // IDEMPOTÊNCIA: Busca transação atual ANTES de atualizar
+      const { data: existingTransaction, error: fetchError } = await supabase
+        .from('transactions')
+        .select('id, status, user_id, metadata, amount, description')
+        .eq('id', transactionId)
+        .single();
+
+      if (fetchError || !existingTransaction) {
+        console.error('❌ Transação não encontrada:', transactionId);
+        return new Response(
+          JSON.stringify({ error: 'Transação não encontrada' }),
+          { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+        );
+      }
+
+      const previousStatus = existingTransaction.status;
+      console.log('🔄 Status da transação:', previousStatus, '->', newStatus);
+
       // Atualiza a transação no banco
       const { error: updateError } = await supabase
         .from('transactions')
@@ -125,18 +143,9 @@ serve(async (req) => {
 
       console.log('✅ Transação atualizada:', transactionId, '->', newStatus);
 
-      // Se o pagamento foi aprovado, atualiza a assinatura do usuário
-      if (newStatus === 'completed') {
-        // Busca a transação para pegar o user_id e metadata
-        const { data: transaction, error: transactionError } = await supabase
-          .from('transactions')
-          .select('user_id, metadata, amount, description')
-          .eq('id', transactionId)
-          .single();
-
-        if (transactionError || !transaction) {
-          console.error('❌ Erro ao buscar transação:', transactionError);
-        } else {
+      // IDEMPOTÊNCIA: Só processa se pagamento mudou para 'completed' (não estava completed antes)
+      if (newStatus === 'completed' && previousStatus !== 'completed') {
+        const transaction = existingTransaction;
           const userId = transaction.user_id;
           const metadata = transaction.metadata || {};
           const durationDays = metadata.duration_days || 30;
@@ -235,6 +244,8 @@ serve(async (req) => {
             }
           }
         }
+      } else if (newStatus === 'completed' && previousStatus === 'completed') {
+        console.log('ℹ️ Pagamento já processado anteriormente (idempotente). Não altera assinatura novamente.');
       }
 
       return new Response(

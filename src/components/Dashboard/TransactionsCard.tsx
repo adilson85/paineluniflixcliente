@@ -136,8 +136,8 @@ export function TransactionsCard({ transactions }: TransactionsCardProps) {
 
                 <div className="text-right">
                   <p className={`text-lg font-bold ${typeConf.color}`}>
-                    {transaction.type === 'commission' ? '+' : '-'}R${' '}
-                    {transaction.amount.toFixed(2)}
+                    {transaction.type === 'commission' ? '+' : ''}R${' '}
+                    {Math.abs(transaction.amount).toFixed(2)}
                   </p>
                   <span
                     className={`text-xs font-medium px-2 py-1 rounded-full ${statusConf.bg} ${statusConf.color}`}

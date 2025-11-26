@@ -193,7 +193,7 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
           amount: selectedPeriod.price,
           payment_method: paymentMethod,
           status: 'pending',
-          description: `Recarga ${selectedPeriod.period_label} - ${selectedPeriod.duration_days} dias`,
+          description: `${selectedPeriod.period_label}`,
           metadata: {
             period: selectedPeriod.period,
             duration_days: selectedPeriod.duration_days,
@@ -215,7 +215,7 @@ export function PaymentCard({ userId, planType, onPaymentSuccess }: PaymentCardP
         transactionId: transaction.id,
         userId: userId,
         amount: selectedPeriod.price,
-        description: `Recarga ${selectedPeriod.period_label} - ${selectedPeriod.duration_days} dias`,
+        description: `${selectedPeriod.period_label}`,
         paymentMethod: paymentMethod,
         metadata: {
           period: selectedPeriod.period,
