@@ -1,0 +1,5 @@
+# Configuração da Edge Function mercadopago-webhook
+# Desabilita verificação de JWT para permitir webhooks públicos do Mercado Pago
+
+[function]
+verify_jwt = false
