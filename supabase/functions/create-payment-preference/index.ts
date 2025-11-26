@@ -12,7 +12,10 @@ const MERCADOPAGO_ACCESS_TOKEN = Deno.env.get('MERCADOPAGO_ACCESS_TOKEN') || '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
-const FRONTEND_URL = Deno.env.get('FRONTEND_URL') || 'http://localhost:3050';
+
+// URL do frontend - DEVE ser uma URL pública HTTPS para o Mercado Pago aceitar
+// O Mercado Pago não aceita localhost como back_url quando auto_return está ativo
+const FRONTEND_URL = Deno.env.get('FRONTEND_URL') || 'https://unflix-painelcliente.netlify.app';
 
 // Extrai o project-ref do SUPABASE_URL (ex: https://xxxxx.supabase.co -> xxxxx)
 function getProjectRef(): string {
@@ -358,10 +361,25 @@ serve(async (req) => {
       }
     }
 
-    // URLs de retorno
+    // URLs de retorno - Mercado Pago requer URLs públicas HTTPS para auto_return
+    console.log('🌐 FRONTEND_URL configurada:', FRONTEND_URL);
+    
+    // Valida se a URL é válida para o Mercado Pago (deve ser HTTPS, não localhost)
+    if (FRONTEND_URL.includes('localhost') || FRONTEND_URL.startsWith('http://')) {
+      console.warn('⚠️ FRONTEND_URL não é uma URL pública HTTPS. Mercado Pago pode rejeitar.');
+      console.warn('   URL atual:', FRONTEND_URL);
+      console.warn('   Configure FRONTEND_URL com uma URL HTTPS pública no Supabase Secrets');
+    }
+    
     const successUrl = `${FRONTEND_URL}/payment/success?transaction_id=${body.transactionId}`;
     const failureUrl = `${FRONTEND_URL}/payment/failure?transaction_id=${body.transactionId}`;
     const pendingUrl = `${FRONTEND_URL}/payment/pending?transaction_id=${body.transactionId}`;
+    
+    console.log('📍 URLs de retorno:', {
+      success: successUrl,
+      failure: failureUrl,
+      pending: pendingUrl,
+    });
 
     // URL correta para webhook (Edge Function)
     let projectRef: string;
