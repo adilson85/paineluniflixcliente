@@ -425,168 +425,141 @@ serve(async (req) => {
       ];
     }
 
-    // Valida email do payer - Mercado Pago requer email válido
-    const payerEmail = userData?.email || user.email || '';
-    const payerName = userData?.full_name || user.email?.split('@')[0] || 'Cliente';
+    // Dados do payer
+    const payerEmail = userData?.email || user.email || 'test_user@testuser.com';
     
-    console.log('📧 Dados do payer:', {
-      email: payerEmail,
-      name: payerName,
-      hasPhone: !!(userData?.phone),
-    });
-    
-    if (!payerEmail || !payerEmail.includes('@')) {
-      console.error('❌ Email do payer inválido ou ausente:', payerEmail);
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: 'Email do usuário é obrigatório para criar pagamento' 
-        }),
-        { 
-          status: 400, 
-          headers: { 
-            ...corsHeaders,
-            'Content-Type': 'application/json' 
-          } 
-        }
-      );
-    }
+    console.log('📧 Email do payer:', payerEmail);
 
-    // Constrói a preferência - estrutura simplificada conforme documentação do Mercado Pago
+    // Constrói a preferência - estrutura MÍNIMA conforme documentação oficial do Mercado Pago
+    // https://www.mercadopago.com.br/developers/pt/reference/preferences/_checkout_preferences/post
     const preferenceData: any = {
+      // OBRIGATÓRIO: items com title, quantity e unit_price
       items: [
         {
-          id: body.transactionId,
-          title: body.description.substring(0, 256), // Mercado Pago limita título a 256 chars
+          title: body.description.substring(0, 256),
           quantity: 1,
-          unit_price: body.amount,
+          unit_price: Number(body.amount),
           currency_id: 'BRL',
         },
       ],
+      // RECOMENDADO: payer com email
       payer: {
         email: payerEmail,
       },
+      // OPCIONAL: back_urls - URLs de retorno após pagamento
       back_urls: {
         success: successUrl,
         failure: failureUrl,
         pending: pendingUrl,
       },
+      // OPCIONAL: auto_return - redireciona automaticamente após pagamento aprovado
       auto_return: 'approved',
+      // OPCIONAL: external_reference - referência externa para identificar a transação
       external_reference: body.transactionId,
-      notification_url: `${functionsBaseUrl}/mercadopago-webhook`,
     };
     
-    // Adiciona nome do payer se disponível
-    if (payerName) {
-      preferenceData.payer.name = payerName;
-    }
-    
-    // Adiciona metadata
-    preferenceData.metadata = {
-      transaction_id: body.transactionId,
-      user_id: body.userId,
-      payment_method: body.paymentMethod,
-      ...body.metadata,
-    };
-    
-    // Adiciona configuração de métodos de pagamento apenas se necessário
-    if (paymentMethodsConfig.excluded_payment_types.length > 0) {
-      preferenceData.payment_methods = paymentMethodsConfig;
-    }
+    console.log('📋 Preferência a ser enviada:', JSON.stringify(preferenceData, null, 2));
 
     console.log('📦 Criando preferência no Mercado Pago...');
-    console.log('🔑 Token configurado:', !!MERCADOPAGO_ACCESS_TOKEN);
-    console.log('🔑 Token (primeiros 20 chars):', MERCADOPAGO_ACCESS_TOKEN.substring(0, 20) + '...');
-    console.log('📋 Dados da preferência completos:', JSON.stringify(preferenceData, null, 2));
+    console.log('🔑 Token (primeiros 30 chars):', MERCADOPAGO_ACCESS_TOKEN.substring(0, 30) + '...');
+    console.log('🌐 URL da API:', 'https://api.mercadopago.com/checkout/preferences');
 
     // Cria a preferência no Mercado Pago
-    const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${MERCADOPAGO_ACCESS_TOKEN}`,
-      },
-      body: JSON.stringify(preferenceData),
-    });
+    // Endpoint: POST https://api.mercadopago.com/checkout/preferences
+    // Documentação: https://www.mercadopago.com.br/developers/pt/reference/preferences/_checkout_preferences/post
+    let mpResponse: Response;
+    let mpResponseText: string;
     
-    console.log('📡 Resposta do Mercado Pago:', {
-      status: response.status,
-      statusText: response.statusText,
-      ok: response.ok,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Erro do Mercado Pago - Status:', response.status);
-      console.error('❌ Erro do Mercado Pago - Status Text:', response.statusText);
-      console.error('❌ Erro do Mercado Pago - Tamanho da resposta:', errorText.length);
-      console.error('❌ Erro do Mercado Pago - Primeiros 500 chars:', errorText.substring(0, 500));
-      console.error('❌ Erro do Mercado Pago - Texto completo:', errorText);
+    try {
+      mpResponse = await fetch('https://api.mercadopago.com/checkout/preferences', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${MERCADOPAGO_ACCESS_TOKEN}`,
+        },
+        body: JSON.stringify(preferenceData),
+      });
       
-      let errorMessage = 'Erro ao criar preferência de pagamento';
-      let errorDetails = '';
+      mpResponseText = await mpResponse.text();
       
-      // Verifica se é HTML (erro de autenticação geralmente retorna HTML)
-      if (errorText.trim().startsWith('<') || errorText.trim().startsWith('<!')) {
-        errorMessage = `Mercado Pago retornou HTML (possível erro de autenticação). Status: ${response.status}`;
-        console.error('❌ Mercado Pago retornou HTML - possível token inválido');
-      } else if (errorText.trim() === '') {
-        errorMessage = `Mercado Pago retornou resposta vazia. Status: ${response.status}`;
-        console.error('❌ Mercado Pago retornou resposta vazia');
-      } else {
-        try {
-          const errorJson = JSON.parse(errorText);
-          console.error('❌ Erro do Mercado Pago (JSON):', JSON.stringify(errorJson, null, 2));
-          
-          // Mercado Pago retorna erros em diferentes formatos
-          if (errorJson.message) {
-            errorMessage = errorJson.message;
-          } else if (errorJson.error) {
-            errorMessage = errorJson.error;
-          }
-          
-          // Captura detalhes adicionais
-          if (errorJson.cause && Array.isArray(errorJson.cause)) {
-            errorDetails = errorJson.cause.map((c: any) => c.description || c.message || JSON.stringify(c)).join('; ');
-          } else if (errorJson.error_description) {
-            errorDetails = errorJson.error_description;
-          }
-          
-          if (errorDetails) {
-            errorMessage = `${errorMessage}: ${errorDetails}`;
-          }
-        } catch (parseErr) {
-          console.error('❌ Não foi possível fazer parse do JSON:', parseErr);
-          errorMessage = `Mercado Pago erro ${response.status}: ${errorText.substring(0, 200)}`;
-        }
-      }
+      console.log('📡 Resposta do Mercado Pago - Status:', mpResponse.status);
+      console.log('📡 Resposta do Mercado Pago - Body:', mpResponseText);
       
-      console.error('❌ Mensagem de erro final:', errorMessage);
-      console.error('❌ Dados enviados ao Mercado Pago:', JSON.stringify(preferenceData, null, 2));
-      
-      // Retorna o erro com detalhes
+    } catch (fetchError: any) {
+      console.error('❌ Erro de rede ao chamar Mercado Pago:', fetchError);
       return new Response(
         JSON.stringify({
           success: false,
-          error: errorMessage,
-          mercadopago_status: response.status,
-          debug_response_length: errorText.length,
+          error: `Erro de conexão com Mercado Pago: ${fetchError.message}`,
         }),
         {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json',
-          },
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         }
       );
     }
 
-    const preferenceResponse = await response.json();
+    if (!mpResponse.ok) {
+      console.error('❌ Mercado Pago retornou erro:', mpResponse.status);
+      console.error('❌ Resposta completa:', mpResponseText);
+      
+      // Tenta parsear o erro como JSON
+      let errorMessage = `Mercado Pago erro ${mpResponse.status}`;
+      try {
+        const errorJson = JSON.parse(mpResponseText);
+        console.error('❌ Erro JSON:', JSON.stringify(errorJson, null, 2));
+        
+        // Formatos de erro do Mercado Pago
+        if (errorJson.message) {
+          errorMessage = errorJson.message;
+        }
+        if (errorJson.cause && Array.isArray(errorJson.cause)) {
+          const causes = errorJson.cause.map((c: any) => c.description || c.message || c.code).filter(Boolean);
+          if (causes.length > 0) {
+            errorMessage += `: ${causes.join(', ')}`;
+          }
+        }
+      } catch {
+        // Não é JSON, usa o texto direto
+        errorMessage = mpResponseText.substring(0, 300) || `Erro ${mpResponse.status}`;
+      }
+      
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: errorMessage,
+          mp_status: mpResponse.status,
+          mp_response: mpResponseText.substring(0, 500),
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+    
+    // Parseia a resposta de sucesso
+    let preferenceResponse: any;
+    try {
+      preferenceResponse = JSON.parse(mpResponseText);
+    } catch {
+      console.error('❌ Erro ao parsear resposta de sucesso:', mpResponseText);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Resposta inválida do Mercado Pago',
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
     console.log('✅ Preferência criada com sucesso:', {
       id: preferenceResponse.id,
-      has_init_point: !!preferenceResponse.init_point,
-      has_sandbox_init_point: !!preferenceResponse.sandbox_init_point,
+      init_point: preferenceResponse.init_point,
+      sandbox_init_point: preferenceResponse.sandbox_init_point,
     });
 
     // Atualiza a transação com o ID da preferência
