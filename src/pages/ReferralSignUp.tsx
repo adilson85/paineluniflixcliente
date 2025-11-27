@@ -204,67 +204,39 @@ export function ReferralSignUp() {
       // Normaliza o WhatsApp para comparação (remove DDI e caracteres não numéricos)
       const whatsappNormalized = stripBR(whatsapp); // Remove +55 se existir e deixa só números
 
-      // Busca todas as solicitações para verificar duplicatas
-      // (busca por telefone normalizado ou formato original)
-      const { data: allRequests, error: checkError } = await supabase
-        .from('testes_liberados')
-        .select('id, nome, telefone, created_at, assinante') as { data: any[] | null; error: any };
+      // ============================================================
+      // VERIFICAÇÃO DE DUPLICATA VIA RPC (BACKEND)
+      // ============================================================
+      // Chama RPC function para verificar se telefone já existe
+      // A função verifica em: testes_liberados, users, offline_clients
+      const { data: duplicateCheck, error: duplicateError } = await supabase
+        .rpc('check_duplicate_phone', { p_phone: whatsappNormalized });
 
-      if (checkError) {
-        console.error('Erro ao verificar duplicata:', checkError);
-      }
+      if (duplicateError) {
+        console.error('Erro ao verificar duplicata:', duplicateError);
+        // Continua sem verificação (fail-open para não bloquear cadastros legítimos)
+        // Em caso de erro na RPC, permite o cadastro para não frustrar usuários
+      } else if (duplicateCheck && duplicateCheck.length > 0 && duplicateCheck[0]?.is_duplicate) {
+        // Telefone duplicado encontrado
+        const isDuplicate = duplicateCheck[0].is_duplicate;
+        const isClient = duplicateCheck[0].is_existing_client;
+        const sourceTable = duplicateCheck[0].source_table;
 
-      // Verifica se já existe uma solicitação com este WhatsApp (normalizado)
-      const existingRequest = allRequests?.find(req => {
-        const reqPhoneNormalized = stripBR(req.telefone || ''); // Remove +55 para comparar
-        return reqPhoneNormalized === whatsappNormalized;
-      });
+        console.log('Telefone duplicado encontrado:', {
+          isDuplicate,
+          isClient,
+          sourceTable,
+          phone: whatsapp
+        });
 
-      // Se já existe uma solicitação com este WhatsApp
-      if (existingRequest) {
         setDuplicateWhatsapp(whatsapp);
+        setIsExistingClient(isClient); // TRUE se é cliente, FALSE se apenas solicitou teste
         setShowDuplicateAlert(true);
         setLoading(false);
         return;
       }
 
-      // Verifica também se já existe como usuário cadastrado
-      const { data: allUsers } = await supabase
-        .from('users')
-        .select('id, full_name, email, phone') as { data: any[] | null; error: any };
-
-      const existingUser = allUsers?.find(user => {
-        const userPhoneNormalized = stripBR(user.phone || ''); // Remove DDI para comparar
-        return userPhoneNormalized === whatsappNormalized ||
-               user.email?.toLowerCase() === email.toLowerCase();
-      });
-
-      if (existingUser) {
-        setDuplicateWhatsapp(whatsapp);
-        setIsExistingClient(true); // Cliente com acesso ao painel
-        setShowDuplicateAlert(true);
-        setLoading(false);
-        return;
-      }
-
-      // Verifica também se já existe como cliente offline (paga via WhatsApp)
-      const { data: offlineClients } = await supabase
-        .from('offline_clients')
-        .select('id, nome, telefone')
-        .is('migrated_to_user_id', null) as { data: any[] | null; error: any }; // Apenas clientes que não foram migrados
-
-      const existingOfflineClient = offlineClients?.find(client => {
-        const clientPhoneNormalized = stripBR(client.telefone || ''); // Remove DDI para comparar
-        return clientPhoneNormalized === whatsappNormalized;
-      });
-
-      if (existingOfflineClient) {
-        setDuplicateWhatsapp(whatsapp);
-        setIsExistingClient(true); // Marca como cliente existente
-        setShowDuplicateAlert(true);
-        setLoading(false);
-        return;
-      }
+      // Nenhum duplicado encontrado - continua com cadastro
 
       // Busca o ID do indicador se houver
       let referrerIdBotconversa = null;

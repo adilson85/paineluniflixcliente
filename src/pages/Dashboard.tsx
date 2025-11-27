@@ -88,12 +88,19 @@ export function Dashboard() {
     console.log('🔍 Buscando testes_liberados com referral_code:', referralCodeToSearch);
     console.log('   Profile referral_code original:', profileData?.referral_code);
     console.log('   Profile completo:', profileData ? Object.keys(profileData) : 'null');
-    
-    const { data: testRequestsData, error: testRequestsError } = await supabase
-      .from('testes_liberados')
-      .select('*')
-      .ilike('referral_code', referralCodeToSearch) // Usa ilike para case-insensitive
-      .order('created_at', { ascending: false });
+
+    // ============================================================
+    // PROTEÇÃO: Só busca se houver código de indicação
+    // ============================================================
+    // Se referralCodeToSearch estiver vazio, ilike('', '') retornaria TODOS os registros
+    // Retorna array vazio para evitar vazamento de dados
+    const { data: testRequestsData, error: testRequestsError } = referralCodeToSearch
+      ? await supabase
+          .from('testes_liberados')
+          .select('*')
+          .ilike('referral_code', referralCodeToSearch) // Usa ilike para case-insensitive
+          .order('created_at', { ascending: false })
+      : { data: [] as any[], error: null }; // Retorna vazio se não houver código
 
     if (testRequestsError) {
       console.error('❌ Erro ao buscar testes_liberados:', testRequestsError);

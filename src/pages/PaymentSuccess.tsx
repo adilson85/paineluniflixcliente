@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle, Loader } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 
 export function PaymentSuccess() {
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [transaction, setTransaction] = useState<any>(null);
 
@@ -18,10 +20,21 @@ export function PaymentSuccess() {
 
     // Verifica o status da transação
     const checkTransaction = async () => {
+      // ============================================================
+      // VALIDAÇÃO DE AUTENTICAÇÃO E OWNERSHIP
+      // ============================================================
+      // Aguarda autenticação (pode estar carregando)
+      if (!user) {
+        setLoading(true);
+        return;
+      }
+
+      // Busca transação validando ownership (apenas transações do próprio usuário)
       const { data, error } = await supabase
         .from('transactions')
         .select('*')
         .eq('id', transactionId)
+        .eq('user_id', user.id) // VALIDAÇÃO: Apenas transações do próprio usuário
         .single();
 
       if (error || !data) {
@@ -47,7 +60,7 @@ export function PaymentSuccess() {
     };
 
     checkTransaction();
-  }, [transactionId]);
+  }, [transactionId, user]); // Adicionar 'user' às dependências
 
   if (loading) {
     return (

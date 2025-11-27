@@ -122,16 +122,27 @@ serve(async (req) => {
       const previousStatus = existingTransaction.status;
       console.log('🔄 Status da transação:', previousStatus, '->', newStatus);
 
-      // Atualiza a transação no banco
+      // Atualiza a transação no banco (preserva metadata original)
+      const originalMetadata = existingTransaction.metadata || {};
+
+      // Cria objeto separado com info do Mercado Pago (evita conflitos de campos)
+      const mpInfo = {
+        id: payment.id,
+        status: payment.status,
+        transaction_amount: payment.transaction_amount,
+        payment_method_id: payment.payment_method_id,
+        date_approved: payment.date_approved,
+        date_created: payment.date_created,
+        updated_at: new Date().toISOString()
+      };
+
       const { error: updateError } = await supabase
         .from('transactions')
         .update({
           status: newStatus,
           metadata: {
-            ...payment,
-            mercado_pago_id: payment.id,
-            mercado_pago_status: payment.status,
-            updated_at: new Date().toISOString(),
+            ...originalMetadata, // Preserva metadata original (promotion_id, period, duration_days, etc)
+            mercado_pago: mpInfo  // Info do MP em objeto separado
           },
         })
         .eq('id', transactionId);
@@ -147,7 +158,8 @@ serve(async (req) => {
       if (newStatus === 'completed' && previousStatus !== 'completed') {
         const transaction = existingTransaction;
           const userId = transaction.user_id;
-          const metadata = transaction.metadata || {};
+          // USA originalMetadata que tem os campos preservados (promotion_id, duration_days, etc)
+          const metadata = originalMetadata;
           const durationDays = metadata.duration_days || 30;
 
           // Busca dados do usuário
@@ -242,6 +254,91 @@ serve(async (req) => {
             } else {
               console.log('✅ Créditos vendidos registrados:', quantidadeCreditos);
             }
+
+            // Processar uso da promoção
+            if (originalMetadata.promotion_id) {
+              const promotionId = originalMetadata.promotion_id;
+              console.log('🎁 Processando uso da promoção:', promotionId);
+
+              // Buscar dados da promoção
+              const { data: promotion } = await supabase
+                .from('promotions')
+                .select('*')
+                .eq('id', promotionId)
+                .single();
+
+              if (promotion) {
+                // Criar registro em promotion_uses
+                const { error: useError } = await supabase
+                  .from('promotion_uses')
+                  .insert({
+                    promotion_id: promotionId,
+                    user_id: userId,
+                    subscription_id: subscriptions[0]?.id || null,
+                    original_price: metadata.original_price || transaction.amount,
+                    discounted_price: transaction.amount,
+                    discount_applied: (metadata.original_price || transaction.amount) - transaction.amount,
+                  });
+
+                if (useError) {
+                  console.error('❌ Erro ao registrar uso da promoção:', useError);
+                } else {
+                  console.log('✅ Uso da promoção registrado em promotion_uses');
+                }
+
+                // Incrementar contador conforme tipo de promoção
+                if (promotion.is_individual) {
+                  // Promoção individual: incrementar em promotion_users
+                  const { error: userPromoError } = await supabase
+                    .rpc('increment_promotion_user_uses', {
+                      p_promotion_id: promotionId,
+                      p_user_id: userId
+                    });
+
+                  if (userPromoError) {
+                    console.error('❌ Erro ao incrementar promotion_users:', userPromoError);
+                  } else {
+                    console.log('✅ Contador de promotion_users incrementado');
+                  }
+                } else {
+                  // Promoção geral: incrementar em promotions
+                  const { error: promoError } = await supabase
+                    .rpc('increment_promotion_uses', { promotion_id: promotionId });
+
+                  if (promoError) {
+                    console.error('❌ Erro ao incrementar promotion:', promoError);
+                  } else {
+                    console.log('✅ Contador de promotions.current_uses incrementado');
+                  }
+                }
+              } else {
+                console.warn('⚠️ Promoção não encontrada:', promotionId);
+              }
+            }
+
+            // Retornar resposta com logs de debug
+            return new Response(
+              JSON.stringify({
+                success: true,
+                transaction_id: transactionId,
+                status: newStatus,
+                debug: {
+                  userName,
+                  quantidadePontos,
+                  quantidadeCreditos,
+                  durationDays,
+                  caixaError: caixaError ? caixaError.message : null,
+                  creditosError: creditosError ? creditosError.message : null,
+                }
+              }),
+              {
+                status: 200,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                },
+              }
+            );
           }
         }
       } else if (newStatus === 'completed' && previousStatus === 'completed') {
@@ -249,10 +346,13 @@ serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ 
-          success: true, 
+        JSON.stringify({
+          success: true,
           transaction_id: transactionId,
-          status: newStatus 
+          status: newStatus,
+          debug: {
+            message: 'Pagamento já processado ou status não é completed'
+          }
         }),
         {
           status: 200,
