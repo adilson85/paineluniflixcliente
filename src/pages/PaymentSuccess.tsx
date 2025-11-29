@@ -3,10 +3,21 @@ import { CheckCircle, Loader } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
+interface Transaction {
+  id: string;
+  user_id: string;
+  amount: number;
+  status: 'pending' | 'completed' | 'failed' | 'cancelled';
+  description?: string;
+  metadata?: any;
+}
+
 export function PaymentSuccess() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [transaction, setTransaction] = useState<any>(null);
+  const [transaction, setTransaction] = useState<Transaction | null>(null);
+  const [checkCount, setCheckCount] = useState(0);
+  const maxChecks = 20; // 20 tentativas x 3 segundos = 1 minuto
 
   // Extrai transaction_id da URL
   const urlParams = new URLSearchParams(window.location.search);
@@ -17,6 +28,8 @@ export function PaymentSuccess() {
       window.location.href = '/';
       return;
     }
+
+    let timeoutId: NodeJS.Timeout;
 
     // Verifica o status da transação
     const checkTransaction = async () => {
@@ -43,24 +56,32 @@ export function PaymentSuccess() {
         return;
       }
 
-      setTransaction(data);
+      const transactionData = data as Transaction;
+      setTransaction(transactionData);
       setLoading(false);
 
-      // Se o status ainda estiver pendente, aguarda alguns segundos e verifica novamente
-      if (data.status === 'pending') {
-        setTimeout(() => {
+      // Se o status ainda estiver pendente e não atingiu o limite de tentativas
+      if (transactionData.status === 'pending' && checkCount < maxChecks) {
+        setCheckCount(prev => prev + 1);
+        timeoutId = setTimeout(() => {
           checkTransaction();
         }, 3000);
-      } else {
+      } else if (transactionData.status === 'completed') {
         // Redireciona para o dashboard após 3 segundos
         setTimeout(() => {
           window.location.href = '/';
         }, 3000);
       }
+      // Se atingiu o limite de tentativas, para de verificar (fica mostrando mensagem de pending)
     };
 
     checkTransaction();
-  }, [transactionId, user]); // Adicionar 'user' às dependências
+
+    // Cleanup: cancela timeout se o componente for desmontado
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [transactionId, user, checkCount]); // Adicionar checkCount às dependências
 
   if (loading) {
     return (
