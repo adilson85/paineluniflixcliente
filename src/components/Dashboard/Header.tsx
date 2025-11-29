@@ -31,9 +31,11 @@ export function Header({ profile, onProfileUpdate }: HeaderProps) {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center">
-              <span className="text-white font-bold text-lg">U</span>
-            </div>
+            <img 
+              src="/uniflixtv.svg" 
+              alt="Uniflix Logo" 
+              className="w-10 h-10 object-contain"
+            />
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Uniflix</h1>
               <p className="text-sm text-gray-500">Portal do Assinante</p>

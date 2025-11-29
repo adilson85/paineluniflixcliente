@@ -6,10 +6,12 @@ export function AuthPage() {
       <div className="w-full max-w-6xl flex items-center justify-center gap-8">
         <div className="hidden lg:block flex-1">
           <div className="text-center">
-            <div className="inline-flex items-center justify-center w-24 h-24 bg-white rounded-3xl shadow-xl mb-6">
-              <span className="text-5xl font-bold bg-gradient-to-br from-blue-600 to-blue-800 bg-clip-text text-transparent">
-                U
-              </span>
+            <div className="inline-flex items-center justify-center mb-6">
+              <img 
+                src="/uniflixtv.svg" 
+                alt="Uniflix Logo" 
+                className="w-32 h-32 object-contain"
+              />
             </div>
             <h1 className="text-5xl font-bold text-gray-900 mb-4">
               Bem-vindo ao Uniflix

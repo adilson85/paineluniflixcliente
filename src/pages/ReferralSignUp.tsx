@@ -468,15 +468,12 @@ export function ReferralSignUp() {
       <div className="w-full max-w-2xl">
         {/* Logo UniFlix */}
         <div className="mb-8 text-center">
-          <div className="inline-flex items-center justify-center space-x-3 mb-4">
-            <div className="relative">
-              <Tv className="w-12 h-12 text-red-600" />
-              <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-600 rounded-full"></div>
-            </div>
-            <div>
-              <span className="text-4xl font-black text-red-600">Uni</span>
-              <span className="text-4xl font-bold text-red-500">Flix</span>
-            </div>
+          <div className="inline-flex items-center justify-center mb-4">
+            <img 
+              src="/uniflixtv.svg" 
+              alt="Uniflix Logo" 
+              className="w-32 h-32 object-contain"
+            />
           </div>
         </div>
 
