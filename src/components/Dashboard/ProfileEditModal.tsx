@@ -42,6 +42,11 @@ export function ProfileEditModal({ profile, onClose, onUpdate }: ProfileEditModa
   const [cidade, setCidade] = useState(profile?.cidade || '');
   const [estado, setEstado] = useState(profile?.estado || '');
 
+  // Campos de senha
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
   // Validação de CPF
   const validateCPF = (cpfValue: string): boolean => {
     const cleanCpf = cpfValue.replace(/\D/g, '');
@@ -201,10 +206,55 @@ export function ProfileEditModal({ profile, onClose, onUpdate }: ProfileEditModa
       return;
     }
 
+    // Validação de senha
+    if (newPassword || confirmPassword || currentPassword) {
+      if (!currentPassword) {
+        setError('Digite sua senha atual para alterar a senha');
+        return;
+      }
+      if (!newPassword) {
+        setError('Digite a nova senha');
+        return;
+      }
+      if (newPassword.length < 6) {
+        setError('A nova senha deve ter pelo menos 6 caracteres');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setError('As senhas não conferem');
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
       let emailChangeRequested = false;
+      let passwordChangeRequested = false;
+
+      // Se a senha foi alterada, atualizar primeiro
+      if (newPassword && currentPassword) {
+        // Primeiro, validar a senha atual fazendo login
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: user?.email!,
+          password: currentPassword,
+        });
+
+        if (signInError) {
+          throw new Error('Senha atual incorreta');
+        }
+
+        // Atualizar para a nova senha
+        const { error: passwordError } = await supabase.auth.updateUser({
+          password: newPassword,
+        });
+
+        if (passwordError) {
+          throw new Error(`Erro ao atualizar senha: ${passwordError.message}`);
+        }
+
+        passwordChangeRequested = true;
+      }
 
       // Se o email mudou, atualizar no auth.users PRIMEIRO
       // O Supabase enviará automaticamente um email de confirmação
@@ -282,8 +332,18 @@ export function ProfileEditModal({ profile, onClose, onUpdate }: ProfileEditModa
         throw updateError;
       }
 
-      // Mensagem de sucesso diferente se mudou email
-      if (emailChangeRequested) {
+      // Mensagem de sucesso diferente se mudou email ou senha
+      if (emailChangeRequested && passwordChangeRequested) {
+        setSuccess(
+          `✅ Dados atualizados!
+
+🔒 Senha alterada com sucesso!
+
+📧 Um email de confirmação foi enviado para ${email}.
+
+⚠️ Você deve confirmar o novo email para que a alteração seja concluída. Até lá, continue usando o email atual para login.`
+        );
+      } else if (emailChangeRequested) {
         setSuccess(
           `✅ Dados atualizados!
 
@@ -291,6 +351,8 @@ export function ProfileEditModal({ profile, onClose, onUpdate }: ProfileEditModa
 
 ⚠️ Você deve confirmar o novo email para que a alteração seja concluída. Até lá, continue usando o email atual para login.`
         );
+      } else if (passwordChangeRequested) {
+        setSuccess('✅ Perfil atualizado com sucesso!\n\n🔒 Senha alterada com sucesso!');
       } else {
         setSuccess('Perfil atualizado com sucesso!');
       }
@@ -298,7 +360,7 @@ export function ProfileEditModal({ profile, onClose, onUpdate }: ProfileEditModa
       setTimeout(() => {
         onUpdate();
         onClose();
-      }, emailChangeRequested ? 4000 : 1500); // Mais tempo se mudou email
+      }, (emailChangeRequested || passwordChangeRequested) ? 3000 : 1500);
     } catch (err: any) {
       setError(err.message || 'Erro ao atualizar perfil');
     } finally {
@@ -539,6 +601,65 @@ export function ProfileEditModal({ profile, onClose, onUpdate }: ProfileEditModa
                 placeholder="SC"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+            </div>
+          </div>
+
+          {/* Seção de Alteração de Senha */}
+          <div className="pt-4 border-t border-gray-200">
+            <h4 className="text-sm font-semibold text-gray-900 mb-4">Alterar Senha (opcional)</h4>
+
+            {/* Senha Atual */}
+            <div className="mb-4">
+              <label htmlFor="currentPassword" className="block text-sm font-medium text-gray-700 mb-2">
+                Senha Atual
+              </label>
+              <input
+                type="password"
+                id="currentPassword"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="Digite sua senha atual"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+            {/* Nova Senha */}
+            <div className="mb-4">
+              <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 mb-2">
+                Nova Senha
+              </label>
+              <input
+                type="password"
+                id="newPassword"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Digite a nova senha (mínimo 6 caracteres)"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+            {/* Confirmar Nova Senha */}
+            <div>
+              <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-2">
+                Confirmar Nova Senha
+              </label>
+              <input
+                type="password"
+                id="confirmPassword"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Digite novamente a nova senha"
+                className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                  confirmPassword && newPassword !== confirmPassword
+                    ? 'border-red-300 bg-red-50'
+                    : 'border-gray-300'
+                }`}
+              />
+              {confirmPassword && newPassword !== confirmPassword && (
+                <p className="text-xs text-red-600 mt-1">
+                  As senhas não conferem
+                </p>
+              )}
             </div>
           </div>
 

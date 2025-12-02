@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { LogIn, Eye, EyeOff, MessageCircle } from 'lucide-react';
+import { Eye, EyeOff, MessageCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 export function LoginForm() {
@@ -56,8 +56,12 @@ export function LoginForm() {
     <>
       <div className="w-full max-w-md p-8 bg-white rounded-2xl shadow-xl">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl mb-4">
-            <LogIn className="w-8 h-8 text-white" />
+          <div className="inline-flex items-center justify-center mb-4">
+            <img
+              src="/uniflixtv.svg"
+              alt="Uniflix Logo"
+              className="w-24 h-24"
+            />
           </div>
           <h2 className="text-3xl font-bold text-gray-900">Bem-vindo de volta</h2>
           <p className="text-gray-600 mt-2">Entre para acessar sua conta Uniflix</p>
